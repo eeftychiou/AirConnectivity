@@ -15,7 +15,10 @@ points = {
     "LTBA": (40.97611, 28.81417),
     "GMFF": (33.92722, -4.97778),
     "LEPA": (39.55167, 2.73889),
-    "EDDF": (50.03333,	8.57056)
+    "EDDF": (50.03333,	8.57056),
+    "LCLK": (34.87889,	33.63028),
+    "LGAV": (37.93667,	23.94444)
+
 }
 
 distance = defaultdict(dict)
@@ -34,13 +37,14 @@ distance['KJFK']['EDDF'] = 3350
 class Test(TestCase):
     def test_compute_time(self):
 
-        pt1='KJFK'
-        pt2='EDDF'
+        testcases=[('KJFK','EDDF', 7.65),
+                   ('LCLK','LGAV',1.60)]
+        res=np.zeros((2,1))
 
-        timetodest=ac.computeTime(points[pt1],points[pt2])
-        diff= abs(timetodest-7.65)
+        for i, case in enumerate(testcases):
+            res[i]=abs(ac.computeTime(points[case[0]],points[case[1]]) - case[2])
 
-        if diff>0.5:
+        if np.sum(res)>(0.5*len(testcases)):
             return False
         else:
             return True

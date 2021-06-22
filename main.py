@@ -1,21 +1,25 @@
 # Skeleton for Air Connectivity indicator
 import json
-from time import strftime, gmtime
+
 import time
 import math
 import airctools as ac
 
 import pandas as pd
-import community as community_louvain
-import networkx as nx
-import igraph as ig
-import os.path
 
+import networkx as nx
+
+import os.path
 
 import matplotlib.pyplot as plt
 import numpy as np
-from datetime import datetime
+
 from igraph import Graph
+
+
+import datetime as dt
+from datetime import datetime
+
 
 from bokeh.io import show, save
 from bokeh.models import Range1d, Circle, ColumnDataSource, MultiLine
@@ -24,59 +28,84 @@ from bokeh.plotting import from_networkx
 from bokeh.palettes import Blues8, Reds8, Purples8, Oranges8, Viridis8, Spectral8
 from bokeh.transform import linear_cmap
 
+import settings
 
+old_print = print
+
+def timestamped_print(*args, **kwargs):
+  old_print(datetime.now(), *args, **kwargs)
+
+print = timestamped_print
 
 def main():
 
+    if settings.get('dataSource') == 0:
+        airc_df = ac.load_raw_ECTL_flights(settings.get('dataSourceFname'), filterMarket = ["Traditional Scheduled", "Lowcost"], loadrows=settings.get('loadRows') )
+        airc_df["Weight"] = 1.0
 
-    airc_df = ac.load_raw_ECTL_flights('Flights_20180901_20180930.csv')
+        if settings.get('sample') == 1:
+            # Sample based on the sampleSize
+            firstDateofTheMonth = airc_df['FILED_OFF_BLOCK_TIME'].iloc[0]
+            day=settings['startDay']
 
-    airc_df["Weight"] = 1.0
-    for i, row in airc_df.iterrows():
-        DestinationDepartureTime = datetime.strftime(row['FILED_ARRIVAL_TIME'] + pd.Timedelta(minutes=30), '%Y-%m-%d %H:%M:%S')
-        DestinationMaxDepartureTime = datetime.strftime(row['FILED_ARRIVAL_TIME'] + pd.Timedelta(minutes=120),
-                                                   '%Y-%m-%d %H:%M:%S')
+            onDay = lambda dtinp, day: dtinp + dt.timedelta(days=(day - dtinp.weekday() - 1) % 7 + 1)
 
-        DestinationAirport= '"'+ row['ADES'] + '"'
-        DepartureAirport= '"'+ row['ADEP']  + '"'
+            StartDateTime = str(onDay(firstDateofTheMonth,day))
+            EndDateTime = str(onDay(firstDateofTheMonth,day) + pd.Timedelta(days=(settings.get('sampleSize')+1)))   # Add one day to allow flights started to calculate onwards connectivity
+            airc_df = airc_df.query(
+                'FILED_OFF_BLOCK_TIME >= ' + "'" + StartDateTime + "'" + ' & FILED_OFF_BLOCK_TIME < ' + "'" + EndDateTime + "'")
 
-        EdgeWeight = len(airc_df.query('ADEP == ' + DestinationAirport + ' & FILED_OFF_BLOCK_TIME >= ' + "'" + DestinationDepartureTime + "'" + ' & FILED_OFF_BLOCK_TIME <= ' + "'" + DestinationMaxDepartureTime + "'" )) + 1
+            print("First "+ str(settings.get('sampleSize')) +  " days of the month:", airc_df.shape)
 
-        airc_df.at[i, 'Weight'] = EdgeWeight
+        if settings.get('edgeWeightConfig') == 0:   #simple weight connection
+            airc_df["Weight"] = 1.0
+        elif settings.get('edgeWeightConfig') == 1:  # edge weight depends on onwards connectivity
+            airc_df=ac.add_weights(airc_df)
+        else:
+            # @TODO implement edge weight based on a/c capacity
+            exit(-1)
 
-        if i%10000==0:
-            print(strftime("%Y-%m-%d %H:%M:%S", gmtime()),"Processed:",i)
+        #get final dataframe based on the sample size
+        if settings.get('sample') == 1:
+
+            EndDateTime = str(onDay(firstDateofTheMonth,day) + pd.Timedelta(days=(settings.get('sampleSize'))))   # Add one day to allow flights started to calculate onwards connectivity
+            airc_df = airc_df.query(
+                'FILED_OFF_BLOCK_TIME >= ' + "'" + StartDateTime + "'" + ' & FILED_OFF_BLOCK_TIME < ' + "'" + EndDateTime + "'")
+
+            print("Final Dataframe From: "+ StartDateTime +  " To:", EndDateTime)
 
 
+    else:
+        airc_df = ac.load_raw_processed_flights(settings.get('dataSourceFname'),filterMarket =None, loadrows = settings.get('loadRows'))
 
-    print(strftime("%Y-%m-%d %H:%M:%S", gmtime()), "Saving CSV result")
-    fname = 'data/Sept_' + str(airc_df.shape[0]) + '_' + str(airc_df.shape[1]) + '.csv'
+
+    print( "Saving CSV result ", str(airc_df.shape[0]) , 'x ' + str(airc_df.shape[1]) )
+    dateNow = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    fname = 'data/Result_(' + dateNow +  ')_' + settings.get("dataSourceFname")
     airc_df.to_csv(fname, index=False)
 
-
-    print(strftime("%Y-%m-%d %H:%M:%S", gmtime()),"Generating Graph")
+    print("Generating Graph")
     # Generate nxGraph
-    nx_airc_G = nx.from_pandas_edgelist(airc_df, source='ADEP', target='ADES', edge_attr='Weight', create_using=nx.DiGraph())
-    fname = 'data/airCon_' +  str(airc_df.shape[0]) + '.gexf'
+    final_df = airc_df.groupby(['ADEP','ADES'],as_index=False).Weight.sum()
+    nx_airc_G = nx.from_pandas_edgelist(final_df, source='ADEP', target='ADES', edge_attr='Weight',
+                                        create_using=nx.DiGraph())
+
+    fname = 'data/gexf_(' + dateNow +  ')_' + settings.get("dataSourceFname")+ '.gexf'
     if not os.path.isfile(fname):
         nx.write_gexf(nx_airc_G, fname)
 
+    fname = 'data/GraphPickle_(' + dateNow + ')_' + settings.get("dataSourceFname")
+    nx.write_gpickle(nx_airc_G, fname)
 
-
-    #ig_airc_G = Graph.DataFrame(airc_df[['ADEP', 'ADES', 'Weight']], directed=True)
-    #ig_airc_G = ig.Graph.from_networkx(nx_airc_G)
-
-    #nx.write_gpickle(nx_airc_G, "test.gpickle")
-
-    #Calculate Statistics
-
-    print(strftime("%Y-%m-%d %H:%M:%S", gmtime()),"Calculating Statistics")
-    #ig_pagerank= ig_airc_G.pagerank(weights='Weight')
+    # Calculate Statistics
+    print( "Calculating Statistics")
+    # ig_pagerank= ig_airc_G.pagerank(weights='Weight')
     pagerank = dict(nx.pagerank(nx_airc_G, alpha=0.85, weight='Weight'))
     degrees = dict(nx.degree(nx_airc_G))
 
-    afname = 'data/Sept_pagerank_' + str(airc_df.shape[0])  + '_' + str(airc_df.shape[1]) + '.json'
-    bfname = 'data/Sept_degrees_' + str(airc_df.shape[0])  + '_' + str(airc_df.shape[1]) + '.json'
+    afname = 'data/Sept_pagerank_' + str(airc_df.shape[0]) + '_' + str(airc_df.shape[1]) + '.json'
+    bfname = 'data/Sept_degrees_' + str(airc_df.shape[0]) + '_' + str(airc_df.shape[1]) + '.json'
     a_file = open(afname, "w")
     b_file = open(bfname, "w")
 
@@ -85,7 +114,7 @@ def main():
 
     a_file.close()
     b_file.close()
-    print(strftime("%Y-%m-%d %H:%M:%S", gmtime()), "Done Calculating Statistics")
+    print("Done Calculating Statistics")
 
     exit(0)
 
@@ -103,7 +132,7 @@ def main():
     # Pick a color palette — Blues8, Reds8, Purples8, Oranges8, Viridis8
     color_palette = Blues8
 
-    #Choose a title!
+    # Choose a title!
     title = 'September 2018 Eurocontrol Dataset'
 
     # Establish which categories will appear when hovering over each node
@@ -137,9 +166,17 @@ def main():
     show(plot)
 
 
-
-
 if __name__ == '__main__':
+    settings.init()
+
+    settings['dataSource'] = 0                                      # 0 for raw , 1 for processed
+    settings['dataSourceFname'] = 'Flights_20180901_20180930.csv'   # filename of data
+    settings['edgeWeightConfig'] = 1                                # 0 for simple connections, 1 for onwards connectivity 2 for passenger numbers
+    settings['sample'] = 1                                          # 0 whole month,  1 sampleSize days sample
+    settings['startDay'] = 0                                         # 0-7 starting with Monday
+    settings['sampleSize'] = 14                                       # Sample size in days
+    settings['loadRows'] = 1000000
+    settings['minLayover'] = 30                                        # minimum layover time in min for connecting flights
+    settings['maxLayover'] = 240                                  # minimum layover time in min for connecting flights
+
     main()
-
-
