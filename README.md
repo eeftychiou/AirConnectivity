@@ -1,4 +1,5 @@
 #Pagerak Air Connectivity Indicator and optimizer
+
 Air Connectivity Indicator using pagerank.
 Can load Eurocontrol R&D Data to calculate connectivity indicator using weighted Pagerank and other network metrics.
 Weight can be a simple connection, proportional to the onwards connectivity at the destination airport or proportional to the passenger capacity of the flight(TODO)
